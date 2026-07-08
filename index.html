@@ -125,13 +125,33 @@
   .add-tile.nested .plus { font-size: 16px; }
   .add-tile.nested .add-label { font-size: 11px; }
   .loading { color: #8a8a90; font-size: 14px; text-align: center; margin-top: 40px; }
+  .sync-status {
+    position: fixed; bottom: 8px; right: 10px; font-size: 11px; color: #b5b5ba;
+    background: rgba(255,255,255,0.9); padding: 3px 8px; border-radius: 6px; pointer-events: none;
+  }
 </style>
 </head>
 <body>
 <div id="app"><div class="loading">Loading…</div></div>
-<script>
-(function () {
-  var STORAGE_KEY = "mission-log-standalone-v1";
+<div id="sync-status" class="sync-status"></div>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+  import {
+    getFirestore, doc, getDoc, setDoc, onSnapshot
+  } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+  var firebaseConfig = {
+    apiKey: "AIzaSyBtRO0GYiHr1KRYmgkYFSmF2tD2Lb9IMvU",
+    authDomain: "missions-a26f9.firebaseapp.com",
+    projectId: "missions-a26f9",
+    storageBucket: "missions-a26f9.firebasestorage.app",
+    messagingSenderId: "818478087349",
+    appId: "1:818478087349:web:71cc21e54c8c6ee29e92fc"
+  };
+
+  var fbApp = initializeApp(firebaseConfig);
+  var db = getFirestore(fbApp);
+  var docRef = doc(db, "missions-app", "shared-data");
 
   function uid() {
     if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
@@ -148,21 +168,30 @@
     return { rootIds: [a, b], missions: missions };
   }
 
-  function load() {
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch (e) {}
-    var fresh = defaultData();
-    save(fresh);
-    return fresh;
+  var suppressNextSnapshot = false;
+  var saveTimer = null;
+  var statusEl = document.getElementById("sync-status");
+
+  function setStatus(text) {
+    if (statusEl) statusEl.textContent = text;
   }
 
   function save(d) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch (e) {}
+    suppressNextSnapshot = true;
+    setStatus("Saving…");
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      setDoc(docRef, d).then(function () {
+        setStatus("Saved");
+        setTimeout(function () { setStatus(""); }, 1200);
+      }).catch(function (err) {
+        console.error("Firestore save failed:", err);
+        setStatus("Save failed — check connection");
+      });
+    }, 250);
   }
 
-  var data = load();
+  var data = null;
   var path = [];
   var expandedIds = {};
   var expandedNotesIds = {};
@@ -437,8 +466,37 @@
     app.appendChild(buildGrid(ids, path, forParentId, 0));
   }
 
-  render();
-})();
+  function init() {
+    getDoc(docRef).then(function (snap) {
+      if (snap.exists()) {
+        data = snap.data();
+      } else {
+        data = defaultData();
+        setDoc(docRef, data);
+      }
+      render();
+
+      onSnapshot(docRef, function (snap) {
+        if (suppressNextSnapshot) {
+          suppressNextSnapshot = false;
+          return;
+        }
+        if (snap.exists()) {
+          data = snap.data();
+          render();
+        }
+      }, function (err) {
+        console.error("Firestore sync error:", err);
+        setStatus("Sync error — check connection");
+      });
+    }).catch(function (err) {
+      console.error("Firestore initial load failed:", err);
+      document.getElementById("app").innerHTML =
+        '<div class="loading">Could not connect. Check your internet connection and reload.</div>';
+    });
+  }
+
+  init();
 </script>
 </body>
 </html>
